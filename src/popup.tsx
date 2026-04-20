@@ -46,6 +46,7 @@ function IndexPopup() {
   const [colRooms, setColRooms] = useStorage("col_rooms", "Rooms")
   const [colSize, setColSize] = useStorage("col_size", "Size")
   const [colFloor, setColFloor] = useStorage("col_floor", "Floor")
+  const [colDescription, setColDescription] = useStorage("col_description", "Description")
 
   // 从本地存储读取列类型映射 (默认值)
   const [colTitleType, setColTitleType] = useStorage("col_title_type", "title")
@@ -54,12 +55,13 @@ function IndexPopup() {
   const [colRoomsType, setColRoomsType] = useStorage("col_rooms_type", "rich_text")
   const [colSizeType, setColSizeType] = useStorage("col_size_type", "rich_text")
   const [colFloorType, setColFloorType] = useStorage("col_floor_type", "number")
+  const [colDescriptionType, setColDescriptionType] = useStorage("col_description_type", "rich_text")
 
   // 本地表单状态，用于 Settings 面板（避免输入时频繁存入 Storage 导致中文输入法卡顿）
   const [form, setForm] = useState({
     notionToken: "", databaseId: "",
-    colTitle: "Name", colUrl: "URL", colRent: "Rent", colRooms: "Rooms", colSize: "Size", colFloor: "Floor",
-    colTitleType: "title", colUrlType: "url", colRentType: "rich_text", colRoomsType: "rich_text", colSizeType: "rich_text", colFloorType: "number"
+    colTitle: "Name", colUrl: "URL", colRent: "Rent", colRooms: "Rooms", colSize: "Size", colFloor: "Floor", colDescription: "Description",
+    colTitleType: "title", colUrlType: "url", colRentType: "rich_text", colRoomsType: "rich_text", colSizeType: "rich_text", colFloorType: "number", colDescriptionType: "rich_text"
   });
   const [saveMessage, setSaveMessage] = useState("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -75,14 +77,16 @@ function IndexPopup() {
       colRooms: colRooms || "Rooms",
       colSize: colSize || "Size",
       colFloor: colFloor || "Floor",
+      colDescription: colDescription || "Description",
       colTitleType: colTitleType || "title",
       colUrlType: colUrlType || "url",
       colRentType: colRentType || "rich_text",
       colRoomsType: colRoomsType || "rich_text",
       colSizeType: colSizeType || "rich_text",
-      colFloorType: colFloorType || "rich_text"
+      colFloorType: colFloorType || "number",
+      colDescriptionType: colDescriptionType || "rich_text"
     });
-  }, [notionToken, databaseId, colTitle, colUrl, colRent, colRooms, colSize, colFloor, colTitleType, colUrlType, colRentType, colRoomsType, colSizeType, colFloorType]);
+  }, [notionToken, databaseId, colTitle, colUrl, colRent, colRooms, colSize, colFloor, colDescription, colTitleType, colUrlType, colRentType, colRoomsType, colSizeType, colFloorType, colDescriptionType]);
 
   // 表单变更处理
   const handleChange = (field: string, value: string) => {
@@ -163,12 +167,14 @@ function IndexPopup() {
     setColRooms(form.colRooms);
     setColSize(form.colSize);
     setColFloor(form.colFloor);
+    setColDescription(form.colDescription);
     setColTitleType(form.colTitleType);
     setColUrlType(form.colUrlType);
     setColRentType(form.colRentType);
     setColRoomsType(form.colRoomsType);
     setColSizeType(form.colSizeType);
     setColFloorType(form.colFloorType);
+    setColDescriptionType(form.colDescriptionType);
 
     setSaveMessage("Settings saved successfully! 🎉");
     setTimeout(() => setSaveMessage(""), 2000);
@@ -181,6 +187,7 @@ function IndexPopup() {
   const [rooms, setRooms] = useState("")
   const [size, setSize] = useState("")
   const [floor, setFloor] = useState("")
+  const [description, setDescription] = useState("")
   const [status, setStatus] = useState("Ready") // 用于显示任务执行状态
 
   // Job 1: 提取当前网页信息的方法
@@ -194,7 +201,7 @@ function IndexPopup() {
         chrome.scripting.executeScript(
           {
             target: { tabId: tabs[0].id },
-            func: () => {
+            func: async () => {
               // 这里面的代码是在目标网页的上下文中执行的
               // 1. 提取标题 (Title)
               const title = document.querySelector("h1")?.textContent?.trim() || document.title;
@@ -214,13 +221,132 @@ function IndexPopup() {
               const pageText = document.body.innerText;
               const floorMatch = pageText.match(/(\d+)(?:st|nd|rd|th)\s+floor/i);
               const floor = floorMatch ? floorMatch[1] : "";
+
+              // 5. 提取描述 (Description)
+              let description = "";
+              
+              // 找到主要内容区域（包含描述、About、Renovation等的大容器）
+              let mainContentArea = document.querySelector('main') ||
+                                    document.querySelector('[role="main"]') ||
+                                    document.querySelector('article') ||
+                                    document.querySelector('div[class*="content"]') ||
+                                    document.querySelector('div[class*="listing"]');
+              
+              if (!mainContentArea) {
+                mainContentArea = document.body;
+              }
+              
+              // 只点击第一个"read more"按钮（房源描述下的）
+              const readMoreButtons = Array.from(mainContentArea.querySelectorAll('button'));
+              let readMoreClicked = false;
+              for (const btn of readMoreButtons) {
+                const text = btn.textContent?.toLowerCase() || '';
+                // 只点击一次，且避免点击其他功能按钮
+                if (!readMoreClicked && (text.includes('read more') || text.includes('see more')) && 
+                    !text.includes('save') && !text.includes('share') && !text.includes('contact')) {
+                  btn.click();
+                  readMoreClicked = true;
+                  // 等待内容加载
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                  break; // 只点击一个，然后跳出
+                }
+              }
+              
+              // 收集所有描述部分
+              const descriptionParts: string[] = [];
+              
+              // 1. 主要描述 - 查找可能的描述元素（只在主内容区域内）
+              const descElement = mainContentArea.querySelector('[class*="description"]') || 
+                                  mainContentArea.querySelector('[class*="about"]:not([class*="aboutus"])') ||
+                                  mainContentArea.querySelector('div[class*="detail"]');
+              
+              if (descElement) {
+                const mainDesc = descElement.textContent?.trim();
+                if (mainDesc && mainDesc.length > 10) {
+                  descriptionParts.push(mainDesc);
+                }
+              }
+              
+              // 2 & 3. 查找所有可能的标题，包括 div、span 等可能作为标题的元素
+              const allElements = Array.from(mainContentArea.querySelectorAll('*'));
+              const titleElements: { title: string; element: Element; type: string }[] = [];
+              
+              for (const elem of allElements) {
+                const text = elem.textContent?.toLowerCase() || '';
+                const tagName = elem.tagName;
+                
+                // 跳过过大的元素（可能是容器）
+                if (elem.children.length > 10) continue;
+                
+                // 只检查直接文本内容
+                let directText = '';
+                for (const child of elem.childNodes) {
+                  if (child.nodeType === 3) { // TEXT_NODE
+                    directText += child.textContent;
+                  }
+                }
+                directText = directText.toLowerCase().trim();
+                
+                // 匹配 "About the building"
+                if (directText.includes('about') && directText.includes('building') && directText.length < 100) {
+                  titleElements.push({ title: 'about_building', element: elem, type: tagName });
+                }
+                
+                // 匹配 "Renovation" 或 "Renovated"
+                if ((directText.includes('renovation') || directText.includes('renovated')) && directText.length < 100) {
+                  titleElements.push({ title: 'renovation', element: elem, type: tagName });
+                }
+              }
+              
+              // 处理找到的标题
+              for (const titleItem of titleElements) {
+                let contentElement = titleItem.element.nextElementSibling;
+                let content = '';
+                let elementCount = 0;
+                
+                // 收集后续内容，直到遇到下一个标题或收集足够多的内容
+                while (contentElement && elementCount < 5) {
+                  const siblingText = contentElement.textContent?.toLowerCase() || '';
+                  
+                  // 如果遇到另一个标题（包含某些关键词），停止
+                  if (siblingText.includes('about') || siblingText.includes('renovation') || 
+                      siblingText.includes('contact') || siblingText.includes('features')) {
+                    if (contentElement.textContent !== titleItem.element.textContent) {
+                      break;
+                    }
+                  }
+                  
+                  content += contentElement.textContent + '\n';
+                  contentElement = contentElement.nextElementSibling;
+                  elementCount++;
+                }
+                
+                content = content.trim();
+                if (content && content.length > 10) {
+                  if (titleItem.title === 'about_building') {
+                    descriptionParts.push('About the building:\n' + content);
+                  } else if (titleItem.title === 'renovation') {
+                    descriptionParts.push('Renovation:\n' + content);
+                  }
+                }
+              }
+              
+              // 合并所有部分
+              description = descriptionParts.join('\n\n').trim();
+              
+              // 如果还没找到，尝试从页面文本中提取段落
+              if (!description) {
+                const paragraphs = Array.from(document.querySelectorAll('p'));
+                description = paragraphs.slice(0, 3).map(p => p.textContent?.trim()).filter(Boolean).join("\n") || "";
+              }
             
               return {
                 title,
                 rent,
                 rooms: roomsMatch ? roomsMatch[1] : "",
                 size: sizeMatch ? sizeMatch[1] : "",
-                floor
+                floor,
+                description
               };
             }
           },
@@ -233,6 +359,7 @@ function IndexPopup() {
                 setRooms(result.rooms);
                 setSize(result.size);
                 setFloor(result.floor);
+                setDescription(result.description);
               }
             }
             setStatus("Extracted successfully!")
@@ -270,6 +397,36 @@ function IndexPopup() {
       const floorProp = buildNotionProperty(floor, colFloorType);
       if (colFloor && floorProp) properties[colFloor] = floorProp;
 
+      const descriptionProp = buildNotionProperty(description, colDescriptionType);
+      if (colDescription && descriptionProp) properties[colDescription] = descriptionProp;
+
+      // 准备请求体
+      const requestBody: any = {
+        parent: { database_id: databaseId },
+        properties: properties
+      };
+
+      // 如果有描述内容，添加到 page 的正文中
+      if (description && description.trim().length > 0) {
+        // 按段落分割描述（分割符是 \n\n）
+        const paragraphs = description.split('\n\n').filter(p => p.trim());
+        
+        requestBody.children = paragraphs.map((paragraph) => ({
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: paragraph.trim()
+                }
+              }
+            ]
+          }
+        }));
+      }
+
       // 向 Notion 发送 POST 请求
       const response = await fetch("https://api.notion.com/v1/pages", {
         method: "POST",
@@ -278,10 +435,7 @@ function IndexPopup() {
           "Notion-Version": "2022-06-28", // Notion API 的版本号
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          parent: { database_id: databaseId },
-          properties: properties
-        })
+        body: JSON.stringify(requestBody)
       })
 
       // 如果请求失败，抛出错误
@@ -388,6 +542,17 @@ function IndexPopup() {
                     value={floor}
                     onChange={(e) => setFloor(e.target.value)}
                     placeholder="Floor Number"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-500">description</label>
+                  <textarea 
+                    className="flex-1 border border-slate-200 p-2 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white resize-none"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Property Description"
+                    rows={3}
                   />
                 </div>
 
@@ -586,6 +751,30 @@ function IndexPopup() {
                   className="border border-slate-200 p-1.5 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none w-[100px] bg-white text-slate-600"
                   value={form.colUrlType}
                   onChange={(e) => handleChange("colUrlType", e.target.value)}
+                >
+                  <option value="none">Do Not Save</option>
+                  <option value="title">Title</option>
+                  <option value="rich_text">Text</option>
+                  <option value="number">Number</option>
+                  <option value="select">Select</option>
+                  <option value="multi_select">Multi-select</option>
+                  <option value="url">URL</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-500 w-16 text-right">description</label>
+                <input 
+                  className="flex-1 border border-slate-200 p-1.5 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                  value={form.colDescription}
+                  onChange={(e) => handleChange("colDescription", e.target.value)}
+                  placeholder="Column Name"
+                  disabled={form.colDescriptionType === "none"}
+                />
+                <select
+                  className="border border-slate-200 p-1.5 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none w-[100px] bg-white text-slate-600"
+                  value={form.colDescriptionType}
+                  onChange={(e) => handleChange("colDescriptionType", e.target.value)}
                 >
                   <option value="none">Do Not Save</option>
                   <option value="title">Title</option>
