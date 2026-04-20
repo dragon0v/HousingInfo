@@ -46,7 +46,7 @@ function IndexPopup() {
   const [colRooms, setColRooms] = useStorage("col_rooms", "Rooms")
   const [colSize, setColSize] = useStorage("col_size", "Size")
   const [colFloor, setColFloor] = useStorage("col_floor", "Floor")
-  const [colDescription, setColDescription] = useStorage("col_description", "Description")
+  const [colPlatform, setColPlatform] = useStorage("col_platform", "Platform")
 
   // 从本地存储读取列类型映射 (默认值)
   const [colTitleType, setColTitleType] = useStorage("col_title_type", "title")
@@ -55,13 +55,17 @@ function IndexPopup() {
   const [colRoomsType, setColRoomsType] = useStorage("col_rooms_type", "rich_text")
   const [colSizeType, setColSizeType] = useStorage("col_size_type", "rich_text")
   const [colFloorType, setColFloorType] = useStorage("col_floor_type", "number")
-  const [colDescriptionType, setColDescriptionType] = useStorage("col_description_type", "rich_text")
+  const [colPlatformType, setColPlatformType] = useStorage("col_platform_type", "select")
+
+  // 控制是否保存description到Notion page正文
+  const [saveDescriptionToBody, setSaveDescriptionToBody] = useStorage("save_description_to_body", "true")
 
   // 本地表单状态，用于 Settings 面板（避免输入时频繁存入 Storage 导致中文输入法卡顿）
   const [form, setForm] = useState({
     notionToken: "", databaseId: "",
-    colTitle: "Name", colUrl: "URL", colRent: "Rent", colRooms: "Rooms", colSize: "Size", colFloor: "Floor", colDescription: "Description",
-    colTitleType: "title", colUrlType: "url", colRentType: "rich_text", colRoomsType: "rich_text", colSizeType: "rich_text", colFloorType: "number", colDescriptionType: "rich_text"
+    colTitle: "Name", colUrl: "URL", colRent: "Rent", colRooms: "Rooms", colSize: "Size", colFloor: "Floor", colPlatform: "Platform",
+    colTitleType: "title", colUrlType: "url", colRentType: "rich_text", colRoomsType: "rich_text", colSizeType: "rich_text", colFloorType: "number", colPlatformType: "select",
+    saveDescriptionToBody: "true"
   });
   const [saveMessage, setSaveMessage] = useState("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -77,16 +81,17 @@ function IndexPopup() {
       colRooms: colRooms || "Rooms",
       colSize: colSize || "Size",
       colFloor: colFloor || "Floor",
-      colDescription: colDescription || "Description",
+      colPlatform: colPlatform || "Platform",
       colTitleType: colTitleType || "title",
       colUrlType: colUrlType || "url",
       colRentType: colRentType || "rich_text",
       colRoomsType: colRoomsType || "rich_text",
       colSizeType: colSizeType || "rich_text",
       colFloorType: colFloorType || "number",
-      colDescriptionType: colDescriptionType || "rich_text"
+      colPlatformType: colPlatformType || "select",
+      saveDescriptionToBody: saveDescriptionToBody || "true"
     });
-  }, [notionToken, databaseId, colTitle, colUrl, colRent, colRooms, colSize, colFloor, colDescription, colTitleType, colUrlType, colRentType, colRoomsType, colSizeType, colFloorType, colDescriptionType]);
+  }, [notionToken, databaseId, colTitle, colUrl, colRent, colRooms, colSize, colFloor, colPlatform, colTitleType, colUrlType, colRentType, colRoomsType, colSizeType, colFloorType, colPlatformType, saveDescriptionToBody]);
 
   // 表单变更处理
   const handleChange = (field: string, value: string) => {
@@ -167,14 +172,15 @@ function IndexPopup() {
     setColRooms(form.colRooms);
     setColSize(form.colSize);
     setColFloor(form.colFloor);
-    setColDescription(form.colDescription);
+    setColPlatform(form.colPlatform);
     setColTitleType(form.colTitleType);
     setColUrlType(form.colUrlType);
     setColRentType(form.colRentType);
     setColRoomsType(form.colRoomsType);
     setColSizeType(form.colSizeType);
     setColFloorType(form.colFloorType);
-    setColDescriptionType(form.colDescriptionType);
+    setColPlatformType(form.colPlatformType);
+    setSaveDescriptionToBody(form.saveDescriptionToBody);
 
     setSaveMessage("Settings saved successfully! 🎉");
     setTimeout(() => setSaveMessage(""), 2000);
@@ -188,6 +194,7 @@ function IndexPopup() {
   const [size, setSize] = useState("")
   const [floor, setFloor] = useState("")
   const [description, setDescription] = useState("")
+  const [platform, setPlatform] = useState("")
   const [status, setStatus] = useState("Ready") // 用于显示任务执行状态
 
   // Job 1: 提取当前网页信息的方法
@@ -362,6 +369,14 @@ function IndexPopup() {
                 setDescription(result.description);
               }
             }
+            
+            // 检测平台
+            if (tabs[0].url?.includes("qasa.com")) {
+              setPlatform("Qasa");
+            } else {
+              setPlatform("");
+            }
+            
             setStatus("Extracted successfully!")
           }
         );
@@ -397,8 +412,11 @@ function IndexPopup() {
       const floorProp = buildNotionProperty(floor, colFloorType);
       if (colFloor && floorProp) properties[colFloor] = floorProp;
 
-      const descriptionProp = buildNotionProperty(description, colDescriptionType);
-      if (colDescription && descriptionProp) properties[colDescription] = descriptionProp;
+      // 平台属性：如果有平台值，则添加到属性中
+      if (platform) {
+        const platformProp = buildNotionProperty(platform, colPlatformType);
+        if (colPlatform && platformProp) properties[colPlatform] = platformProp;
+      }
 
       // 准备请求体
       const requestBody: any = {
@@ -406,8 +424,8 @@ function IndexPopup() {
         properties: properties
       };
 
-      // 如果有描述内容，添加到 page 的正文中
-      if (description && description.trim().length > 0) {
+      // 如果启用了保存description到page正文，添加到page的正文中
+      if (saveDescriptionToBody === "true" && description && description.trim().length > 0) {
         // 按段落分割描述（分割符是 \n\n）
         const paragraphs = description.split('\n\n').filter(p => p.trim());
         
@@ -542,6 +560,16 @@ function IndexPopup() {
                     value={floor}
                     onChange={(e) => setFloor(e.target.value)}
                     placeholder="Floor Number"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-500 w-10 text-right">platform</label>
+                  <input 
+                    className="flex-1 border border-slate-200 p-2 rounded text-sm bg-slate-100 text-slate-500 outline-none"
+                    value={platform}
+                    readOnly
+                    placeholder="Auto-detected Platform"
                   />
                 </div>
 
@@ -763,18 +791,18 @@ function IndexPopup() {
               </div>
 
               <div className="flex items-center gap-2">
-                <label className="text-xs font-semibold text-slate-500 w-16 text-right">description</label>
+                <label className="text-xs font-semibold text-slate-500 w-16 text-right">platform</label>
                 <input 
                   className="flex-1 border border-slate-200 p-1.5 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-400"
-                  value={form.colDescription}
-                  onChange={(e) => handleChange("colDescription", e.target.value)}
+                  value={form.colPlatform}
+                  onChange={(e) => handleChange("colPlatform", e.target.value)}
                   placeholder="Column Name"
-                  disabled={form.colDescriptionType === "none"}
+                  disabled={form.colPlatformType === "none"}
                 />
                 <select
                   className="border border-slate-200 p-1.5 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none w-[100px] bg-white text-slate-600"
-                  value={form.colDescriptionType}
-                  onChange={(e) => handleChange("colDescriptionType", e.target.value)}
+                  value={form.colPlatformType}
+                  onChange={(e) => handleChange("colPlatformType", e.target.value)}
                 >
                   <option value="none">Do Not Save</option>
                   <option value="title">Title</option>
@@ -784,6 +812,17 @@ function IndexPopup() {
                   <option value="multi_select">Multi-select</option>
                   <option value="url">URL</option>
                 </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-500">description</label>
+                <input 
+                  type="checkbox"
+                  className="w-4 h-4 rounded border-slate-200 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                  checked={form.saveDescriptionToBody === "true"}
+                  onChange={(e) => handleChange("saveDescriptionToBody", e.target.checked ? "true" : "false")}
+                />
+                <span className="text-xs text-slate-500">Save to page body</span>
               </div>
             </div>
 
