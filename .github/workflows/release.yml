@@ -21,8 +21,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24' # 建议使用 20 或 22 这类稳定的 LTS 版本
-          cache: 'npm'       # 缓存改为 npm
+          node-version: '24'
+          cache: 'npm'
 
       - name: Install Dependencies
         run: npm ci # 在 CI 环境中，推荐使用 npm ci 替代 npm install，它会严格按照 package-lock.json 安装，速度更快且不出错
