@@ -33,7 +33,8 @@
       "activeTab"
     ],
     "host_permissions": [
-      "https://qasa.com/*"
+      "https://qasa.com/*",
+      "https://homeq.se/*"
     ]
   }
 }

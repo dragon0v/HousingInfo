@@ -196,6 +196,7 @@ function IndexPopup() {
   const [description, setDescription] = useState("")
   const [platform, setPlatform] = useState("")
   const [status, setStatus] = useState("Ready") // 用于显示任务执行状态
+  const [notionSaveStatus, setNotionSaveStatus] = useState<"idle" | "success" | "failed">("idle") // Save to Notion 按钮状态
 
   // Job 1: 提取当前网页信息的方法
   const extractCurrentPage = () => {
@@ -210,151 +211,266 @@ function IndexPopup() {
             target: { tabId: tabs[0].id },
             func: async () => {
               // 这里面的代码是在目标网页的上下文中执行的
-              // 1. 提取标题 (Title)
-              const title = document.querySelector("h1")?.textContent?.trim() || document.title;
               
-              // 2. 提取租金 (Rent Price)
-              const rentNode = Array.from(document.querySelectorAll("h2")).find(
-                (el) => el.textContent?.includes("SEK") || el.textContent?.includes("kr")
-              );
-              const rent = rentNode?.textContent?.replace(/\u00A0/g, " ")?.trim() || "";
-            
-              // 3. 提取房间数和面积 (Rooms & Size)
-              const metaDescription = document.querySelector('meta[name="description"]')?.getAttribute("content") || "";
-              const roomsMatch = metaDescription.match(/(\d+)\s+rooms?/i);
-              const sizeMatch = metaDescription.match(/(\d+)\s+m²/i);
-
-              // 4. 提取楼层 (Floor)
-              const pageText = document.body.innerText;
-              const floorMatch = pageText.match(/(\d+)(?:st|nd|rd|th)\s+floor/i);
-              const floor = floorMatch ? floorMatch[1] : "";
-
-              // 5. 提取描述 (Description)
-              let description = "";
+              // 检测网站类型
+              const isHomeQ = window.location.hostname.includes("homeq.se");
+              const isQasa = window.location.hostname.includes("qasa.com");
               
-              // 找到主要内容区域（包含描述、About、Renovation等的大容器）
-              let mainContentArea = document.querySelector('main') ||
-                                    document.querySelector('[role="main"]') ||
-                                    document.querySelector('article') ||
-                                    document.querySelector('div[class*="content"]') ||
-                                    document.querySelector('div[class*="listing"]');
-              
-              if (!mainContentArea) {
-                mainContentArea = document.body;
-              }
-              
-              // 只点击第一个"read more"按钮（房源描述下的）
-              const readMoreButtons = Array.from(mainContentArea.querySelectorAll('button'));
-              let readMoreClicked = false;
-              for (const btn of readMoreButtons) {
-                const text = btn.textContent?.toLowerCase() || '';
-                // 只点击一次，且避免点击其他功能按钮
-                if (!readMoreClicked && (text.includes('read more') || text.includes('see more')) && 
-                    !text.includes('save') && !text.includes('share') && !text.includes('contact')) {
-                  btn.click();
-                  readMoreClicked = true;
-                  // 等待内容加载
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                  break; // 只点击一个，然后跳出
-                }
-              }
-              
-              // 收集所有描述部分
-              const descriptionParts: string[] = [];
-              
-              // 1. 主要描述 - 查找可能的描述元素（只在主内容区域内）
-              const descElement = mainContentArea.querySelector('[class*="description"]') || 
-                                  mainContentArea.querySelector('[class*="about"]:not([class*="aboutus"])') ||
-                                  mainContentArea.querySelector('div[class*="detail"]');
-              
-              if (descElement) {
-                const mainDesc = descElement.textContent?.trim();
-                if (mainDesc && mainDesc.length > 10) {
-                  descriptionParts.push(mainDesc);
-                }
-              }
-              
-              // 2 & 3. 查找所有可能的标题，包括 div、span 等可能作为标题的元素
-              const allElements = Array.from(mainContentArea.querySelectorAll('*'));
-              const titleElements: { title: string; element: Element; type: string }[] = [];
-              
-              for (const elem of allElements) {
-                const text = elem.textContent?.toLowerCase() || '';
-                const tagName = elem.tagName;
-                
-                // 跳过过大的元素（可能是容器）
-                if (elem.children.length > 10) continue;
-                
-                // 只检查直接文本内容
-                let directText = '';
-                for (const child of elem.childNodes) {
-                  if (child.nodeType === 3) { // TEXT_NODE
-                    directText += child.textContent;
-                  }
-                }
-                directText = directText.toLowerCase().trim();
-                
-                // 匹配 "About the building"
-                if (directText.includes('about') && directText.includes('building') && directText.length < 100) {
-                  titleElements.push({ title: 'about_building', element: elem, type: tagName });
-                }
-                
-                // 匹配 "Renovation" 或 "Renovated"
-                if ((directText.includes('renovation') || directText.includes('renovated')) && directText.length < 100) {
-                  titleElements.push({ title: 'renovation', element: elem, type: tagName });
-                }
-              }
-              
-              // 处理找到的标题
-              for (const titleItem of titleElements) {
-                let contentElement = titleItem.element.nextElementSibling;
-                let content = '';
-                let elementCount = 0;
-                
-                // 收集后续内容，直到遇到下一个标题或收集足够多的内容
-                while (contentElement && elementCount < 5) {
-                  const siblingText = contentElement.textContent?.toLowerCase() || '';
+              if (isHomeQ) {
+                // ===== HomeQ 提取逻辑 =====
+                try {
+                  // 查找JSON数据（通常在script标签中）
+                  const scripts = Array.from(document.querySelectorAll('script'));
+                  let apartmentData: any = null;
+                  let rentText = ""; // 在外部定义rentText
                   
-                  // 如果遇到另一个标题（包含某些关键词），停止
-                  if (siblingText.includes('about') || siblingText.includes('renovation') || 
-                      siblingText.includes('contact') || siblingText.includes('features')) {
-                    if (contentElement.textContent !== titleItem.element.textContent) {
-                      break;
+                  for (const script of scripts) {
+                    if (script.textContent && script.textContent.includes('"floor":') && script.textContent.includes('"rent":')) {
+                      try {
+                        const content = script.textContent;
+                        // 尝试找到JSON对象
+                        const match = content.match(/\{[^{}]*"floor":[^{}]*"rent":[^}]*\}/);
+                        if (match) {
+                          apartmentData = JSON.parse(match[0]);
+                          break;
+                        }
+                      } catch (e) {
+                        // 继续查找
+                      }
                     }
                   }
                   
-                  content += contentElement.textContent + '\n';
-                  contentElement = contentElement.nextElementSibling;
-                  elementCount++;
+                  // 如果JSON解析失败，从DOM提取
+                  if (!apartmentData) {
+                    // 从DOM提取title（h1或页面标题）
+                    const titleElement = document.querySelector("h1");
+                    const titleFromH1 = titleElement?.textContent?.trim() || "";
+                    
+                    // 从DOM提取租金
+                    rentText = Array.from(document.querySelectorAll('p')).find(p => p.textContent?.includes('kr/mån'))?.textContent || "";
+                    // 修改正则以匹配包含空格的数字（如 "8 083"）
+                    const rentMatch = rentText.match(/(\d+\s*\d+|\d+)\s*kr/);
+                    let rentValue = 0;
+                    if (rentMatch) {
+                      rentValue = parseInt(rentMatch[1].replace(/\s/g, ''));
+                    }
+                    
+                    // 从DOM提取房间数
+                    const roomsText = Array.from(document.querySelectorAll('p')).find(p => p.textContent?.includes('rum'))?.textContent || "";
+                    
+                    // 从DOM提取面积
+                    const sizeText = Array.from(document.querySelectorAll('p')).find(p => p.textContent?.includes('m²'))?.textContent || "";
+                    
+                    // 从DOM提取楼层（格式："5 våning"）
+                    const pageText = document.body.innerText;
+                    const floorMatch = pageText.match(/(\d+)\s+våning/i);
+                    const floorValue = floorMatch ? parseInt(floorMatch[1]) : 0;
+                    
+                    // 点击"läs mer"按钮来展示完整description
+                    const lasmerButton = Array.from(document.querySelectorAll('button')).find(btn => 
+                      btn.textContent?.toLowerCase().includes('läs mer')
+                    );
+                    if (lasmerButton) {
+                      lasmerButton.click();
+                      // 等待内容加载
+                      await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                    
+                    // 提取description - 直接从homeq-body-text p标签获取
+                    let description = "";
+                    
+                    // 方法1：查找所有class包含"homeq-body-text"的p标签，选择最长的（最可能是描述）
+                    const bodyTextPs = Array.from(document.querySelectorAll('p')).filter(p => 
+                      p.className?.includes('homeq-body-text') || p.className?.includes('body-text')
+                    );
+                    if (bodyTextPs.length > 0) {
+                      // 选择文本最长的p标签
+                      const longestP = bodyTextPs.reduce((prev, current) => 
+                        (current.innerText?.length || 0) > (prev.innerText?.length || 0) ? current : prev
+                      );
+                      description = longestP.innerText?.trim() || "";
+                    }
+                    
+                    // 方法2（备用）：如果方法1失败，查找描述部分的元素
+                    if (!description) {
+                      const allElements = Array.from(document.querySelectorAll('*'));
+                      for (let i = 0; i < allElements.length; i++) {
+                        const el = allElements[i];
+                        const text = el.textContent?.trim() || "";
+                        if (text.toLowerCase() === 'beskrivning' || text.toLowerCase() === 'om lägenheten') {
+                          // 获取同级或后续元素中的文本
+                          let nextEl = el.nextElementSibling;
+                          let attempts = 0;
+                          while (nextEl && attempts < 5) {
+                            const nextText = nextEl.innerText?.trim();
+                            if (nextText && !nextText.toLowerCase().includes('läs mer')) {
+                              description += nextText + '\n';
+                              nextEl = nextEl.nextElementSibling;
+                              attempts++;
+                            } else {
+                              break;
+                            }
+                          }
+                          if (description) break;
+                        }
+                      }
+                    }
+                    
+                    apartmentData = {
+                      street: titleFromH1,
+                      street_number: "",
+                      rooms: roomsText.match(/(\d+\.?\d*)/)?.[1] || "",
+                      floor: floorValue,
+                      area: sizeText.match(/(\d+)/)?.[1] || "",
+                      rent: rentValue,
+                      description: description.trim()
+                    };
+                  }
+                  
+                  // 如果title仍然为空，尝试从页面标题提取
+                  let title = `${apartmentData.street || ""} ${apartmentData.street_number || ""}`.trim();
+                  if (!title) {
+                    title = document.title.split('|')[0].trim() || "";
+                  }
+                  
+                  const rent = apartmentData.rent ? `${apartmentData.rent} kr/mån` : rentText?.trim() || "";
+                  const rooms = String(apartmentData.rooms || "");
+                  const size = apartmentData.area ? `${apartmentData.area} m²` : "";
+                  const floor = String(apartmentData.floor || "");
+                  const description = apartmentData.description || "";
+                  
+                  return { title, rent, rooms, size, floor, description };
+                } catch (e) {
+                  return { title: "", rent: "", rooms: "", size: "", floor: "", description: "" };
+                }
+              } else if (isQasa) {
+                // ===== Qasa 提取逻辑 =====
+                const title = document.querySelector("h1")?.textContent?.trim() || document.title;
+                
+                const rentNode = Array.from(document.querySelectorAll("h2")).find(
+                  (el) => el.textContent?.includes("SEK") || el.textContent?.includes("kr")
+                );
+                const rent = rentNode?.textContent?.replace(/\u00A0/g, " ")?.trim() || "";
+              
+                const metaDescription = document.querySelector('meta[name="description"]')?.getAttribute("content") || "";
+                const roomsMatch = metaDescription.match(/(\d+)\s+rooms?/i);
+                const sizeMatch = metaDescription.match(/(\d+)\s+m²/i);
+
+                const pageText = document.body.innerText;
+                const floorMatch = pageText.match(/(\d+)(?:st|nd|rd|th)\s+floor/i);
+                const floor = floorMatch ? floorMatch[1] : "";
+
+                let description = "";
+                
+                let mainContentArea = document.querySelector('main') ||
+                                      document.querySelector('[role="main"]') ||
+                                      document.querySelector('article') ||
+                                      document.querySelector('div[class*="content"]') ||
+                                      document.querySelector('div[class*="listing"]');
+                
+                if (!mainContentArea) {
+                  mainContentArea = document.body;
                 }
                 
-                content = content.trim();
-                if (content && content.length > 10) {
-                  if (titleItem.title === 'about_building') {
-                    descriptionParts.push('About the building:\n' + content);
-                  } else if (titleItem.title === 'renovation') {
-                    descriptionParts.push('Renovation:\n' + content);
+                const readMoreButtons = Array.from(mainContentArea.querySelectorAll('button'));
+                let readMoreClicked = false;
+                for (const btn of readMoreButtons) {
+                  const text = btn.textContent?.toLowerCase() || '';
+                  if (!readMoreClicked && (text.includes('read more') || text.includes('see more')) && 
+                      !text.includes('save') && !text.includes('share') && !text.includes('contact')) {
+                    btn.click();
+                    readMoreClicked = true;
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    break;
                   }
                 }
+                
+                const descriptionParts: string[] = [];
+                
+                const descElement = mainContentArea.querySelector('[class*="description"]') || 
+                                    mainContentArea.querySelector('[class*="about"]:not([class*="aboutus"])') ||
+                                    mainContentArea.querySelector('div[class*="detail"]');
+                
+                if (descElement) {
+                  const mainDesc = descElement.textContent?.trim();
+                  if (mainDesc && mainDesc.length > 10) {
+                    descriptionParts.push(mainDesc);
+                  }
+                }
+                
+                const allElements = Array.from(mainContentArea.querySelectorAll('*'));
+                const titleElements: { title: string; element: Element; type: string }[] = [];
+                
+                for (const elem of allElements) {
+                  const tagName = elem.tagName;
+                  
+                  if (elem.children.length > 10) continue;
+                  
+                  let directText = '';
+                  for (const child of elem.childNodes) {
+                    if (child.nodeType === 3) {
+                      directText += child.textContent;
+                    }
+                  }
+                  directText = directText.toLowerCase().trim();
+                  
+                  if (directText.includes('about') && directText.includes('building') && directText.length < 100) {
+                    titleElements.push({ title: 'about_building', element: elem, type: tagName });
+                  }
+                  
+                  if ((directText.includes('renovation') || directText.includes('renovated')) && directText.length < 100) {
+                    titleElements.push({ title: 'renovation', element: elem, type: tagName });
+                  }
+                }
+                
+                for (const titleItem of titleElements) {
+                  let contentElement = titleItem.element.nextElementSibling;
+                  let content = '';
+                  let elementCount = 0;
+                  
+                  while (contentElement && elementCount < 5) {
+                    const siblingText = contentElement.textContent?.toLowerCase() || '';
+                    
+                    if (siblingText.includes('about') || siblingText.includes('renovation') || 
+                        siblingText.includes('contact') || siblingText.includes('features')) {
+                      if (contentElement.textContent !== titleItem.element.textContent) {
+                        break;
+                      }
+                    }
+                    
+                    content += contentElement.textContent + '\n';
+                    contentElement = contentElement.nextElementSibling;
+                    elementCount++;
+                  }
+                  
+                  content = content.trim();
+                  if (content && content.length > 10) {
+                    if (titleItem.title === 'about_building') {
+                      descriptionParts.push('About the building:\n' + content);
+                    } else if (titleItem.title === 'renovation') {
+                      descriptionParts.push('Renovation:\n' + content);
+                    }
+                  }
+                }
+                
+                description = descriptionParts.join('\n\n').trim();
+                
+                if (!description) {
+                  const paragraphs = Array.from(document.querySelectorAll('p'));
+                  description = paragraphs.slice(0, 3).map(p => p.textContent?.trim()).filter(Boolean).join("\n") || "";
+                }
+              
+                return {
+                  title,
+                  rent,
+                  rooms: roomsMatch ? roomsMatch[1] : "",
+                  size: sizeMatch ? sizeMatch[1] : "",
+                  floor,
+                  description
+                };
               }
               
-              // 合并所有部分
-              description = descriptionParts.join('\n\n').trim();
-              
-              // 如果还没找到，尝试从页面文本中提取段落
-              if (!description) {
-                const paragraphs = Array.from(document.querySelectorAll('p'));
-                description = paragraphs.slice(0, 3).map(p => p.textContent?.trim()).filter(Boolean).join("\n") || "";
-              }
-            
-              return {
-                title,
-                rent,
-                rooms: roomsMatch ? roomsMatch[1] : "",
-                size: sizeMatch ? sizeMatch[1] : "",
-                floor,
-                description
-              };
+              return { title: "", rent: "", rooms: "", size: "", floor: "", description: "" };
             }
           },
           (injectionResults) => {
@@ -371,7 +487,9 @@ function IndexPopup() {
             }
             
             // 检测平台
-            if (tabs[0].url?.includes("qasa.com")) {
+            if (tabs[0].url?.includes("homeq.se")) {
+              setPlatform("HomeQ");
+            } else if (tabs[0].url?.includes("qasa.com")) {
               setPlatform("Qasa");
             } else {
               setPlatform("");
@@ -389,6 +507,7 @@ function IndexPopup() {
   // Job 2: 保存到 Notion 的方法
   const saveToNotion = async () => {
     setStatus("Saving to Notion...")
+    setNotionSaveStatus("idle")
 
     try {
       // 构造属性，如果列名映射为空或选择了“不保存”，则不保存该字段
@@ -464,13 +583,19 @@ function IndexPopup() {
 
       // 请求成功！
       setStatus("Saved successfully! 🎉")
+      setNotionSaveStatus("success")
       
       // 两秒后把状态栏文字重置
       setTimeout(() => setStatus("Ready"), 2000)
+      // 按钮文本保持3秒后恢复
+      setTimeout(() => setNotionSaveStatus("idle"), 3000)
 
     } catch (error: any) {
       // 捕捉并显示错误信息
       setStatus(`Error: ${error.message}`)
+      setNotionSaveStatus("failed")
+      // 按钮文本保持3秒后恢复
+      setTimeout(() => setNotionSaveStatus("idle"), 3000)
     }
   }
 
@@ -612,9 +737,17 @@ function IndexPopup() {
               <button 
                 onClick={saveToNotion}
                 disabled={!notionToken || !databaseId}
-                className="w-full bg-slate-800 hover:bg-black disabled:bg-slate-300 text-white font-bold text-base py-3 px-4 rounded transition-all text-left flex items-center justify-between active:scale-[0.98]"
+                className={`w-full font-bold text-base py-3 px-4 rounded transition-all text-left flex items-center justify-between active:scale-[0.98] ${
+                  notionSaveStatus === "success" ? "bg-green-600 hover:bg-green-700 text-white" :
+                  notionSaveStatus === "failed" ? "bg-red-600 hover:bg-red-700 text-white" :
+                  "bg-slate-800 hover:bg-black disabled:bg-slate-300 text-white"
+                } disabled:bg-slate-300`}
               >
-                <span>Save to Notion</span>
+                <span>
+                  {notionSaveStatus === "success" ? "Save Success" :
+                   notionSaveStatus === "failed" ? "Save Failed" :
+                   "Save to Notion"}
+                </span>
                 {(!notionToken || !databaseId) && <span className="text-[10px] text-red-300">Config Required</span>}
               </button>
 
