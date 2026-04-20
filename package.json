@@ -1,7 +1,7 @@
 {
   "name": "housing-info",
   "displayName": "Housing info",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Extract housing information.",
   "author": "dragon0v",
   "scripts": {
