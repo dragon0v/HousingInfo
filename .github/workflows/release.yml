@@ -35,12 +35,12 @@ jobs:
         # 进入该目录进行压缩，避免解压后出现多层嵌套文件夹
         run: |
           cd build/chrome-mv3-prod
-          zip -r ../../extension.zip ./*
+          zip -r ../../housinginfo.zip ./*
 
       - name: Create Release and upload asset
         uses: softprops/action-gh-release@v2.1.0
         with:
-          files: extension.zip
+          files: housinginfo.zip
           generate_release_notes: true # 自动根据 commit 生成 Release Note
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
